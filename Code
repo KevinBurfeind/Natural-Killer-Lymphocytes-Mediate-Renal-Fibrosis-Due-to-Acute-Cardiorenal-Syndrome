@@ -1,0 +1,1001 @@
+#Load the required packages
+
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(CellChat)
+options(stringsAsFactors = FALSE)
+
+#Start with the UUO JASN Dataset
+#Load the Sham dataset
+UUO_Sham_JASN.data <- Read10X(data.dir = "Desktop/Hutchens Lab/ScRNASeq/UUO_Sham_JASN")
+
+#Make the Sham Seurat ojbect
+UUO_Sham_JASN <- CreateSeuratObject(counts = UUO_Sham_JASN.data, project = "UUO_Sham_JASN", min.cells = 3, min.features = 200)
+UUO_Sham_JASN
+
+#An object of class Seurat 
+#14921 features across 5540 samples within 1 assay 
+#Active assay: RNA (14921 features, 0 variable features)
+
+#Add meta data so you can pull out the cells based on the time point and disease state
+UUO_Sham_JASN <- AddMetaData(object = UUO_Sham_JASN, metadata = "Sham", col.name = "time.point")
+UUO_Sham_JASN <- AddMetaData(object = UUO_Sham_JASN, metadata = "Healthy", col.name = "disease.state")
+UUO_Sham_JASN@meta.data
+
+#Load the 2d dataset
+UUO_2d_JASN.data <- Read10X(data.dir = "Desktop/Hutchens Lab/ScRNASeq/UUO_2d_JASN")
+
+#Make the 2d Seurat ojbect
+UUO_2d_JASN <- CreateSeuratObject(counts = UUO_2d_JASN.data, project = "UUO_2d_JASN", min.cells = 3, min.features = 200)
+UUO_2d_JASN
+
+#An object of class Seurat 
+#16187 features across 2679 samples within 1 assay 
+#Active assay: RNA (16187 features, 0 variable features)
+
+#Add meta data so you can pull out the cells based on the time point
+UUO_2d_JASN <- AddMetaData(object = UUO_2d_JASN, metadata = "Day 2", col.name = "time.point")
+UUO_2d_JASN <- AddMetaData(object = UUO_2d_JASN, metadata = "Disease", col.name = "disease.state")
+UUO_2d_JASN@meta.data
+
+
+# Load the 7d dataset (filtered_feature_bc_matrix containing "matrix", "features", and "barcodes" files)
+UUO_7d_JASN.data <- Read10X(data.dir = "Desktop/Hutchens Lab/ScRNASeq/UUO_7d_JASN")
+
+# Initialize the Seurat object with the raw (non-normalized data).
+UUO_7d_JASN <- CreateSeuratObject(counts = UUO_7d_JASN.data, project = "UUO_7d_JASN", min.cells = 3, min.features = 200)
+UUO_7d_JASN
+
+#An object of class Seurat 
+#17172 features across 4501 samples within 1 assay 
+#Active assay: RNA (17172 features, 0 variable features)
+
+#Add meta data so you can pull out the cells based on the time point
+UUO_7d_JASN <- AddMetaData(object = UUO_7d_JASN, metadata = "Day 7", col.name = "time.point")
+UUO_7d_JASN <- AddMetaData(object = UUO_7d_JASN, metadata = "Disease", col.name = "disease.state")
+UUO_7d_JASN@meta.data
+
+#Merge the datasets
+UUO_JASN_Everything <- merge(UUO_7d_JASN, y = c(UUO_2d_JASN, UUO_Sham_JASN), add.cell.ids = c("UUO_7d_JASN", "UUO_2d_JASN", "UUO_Sham_JASN"), project = "UUO_JASN_Everything")
+UUO_JASN_Everything
+
+#An object of class Seurat 
+#17615 features across 12720 samples within 1 assay 
+#Active assay: RNA (17615 features, 0 variable features)
+
+#Add meta data so you can pull out the cells based on dataset
+UUO_JASN_Everything <- AddMetaData(object = UUO_JASN_Everything, metadata = "UUO JASN", col.name = "dataset")
+UUO_JASN_Everything@meta.data
+
+# The [[ operator can add columns to object metadata. This is a great place to stash QC stats
+UUO_JASN_Everything[["percent.mt"]] <- PercentageFeatureSet(UUO_JASN_Everything, pattern = "^mt-")
+
+VlnPlot(UUO_JASN_Everything, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+
+#NOT: Lots of mtgenes in UUO_Sham_JASN. Will do a more liberal filter for now. Consider lowering in future studies
+
+UUO_JASN_Everything <- subset(UUO_JASN_Everything, subset = nFeature_RNA < 5500 & nCount_RNA < 30000 & percent.mt < 90)
+UUO_JASN_Everything
+
+#An object of class Seurat 
+#17615 features across 12627 samples within 1 assay 
+#Active assay: RNA (17615 features, 0 variable features)
+
+plot1 <- FeatureScatter(UUO_JASN_Everything, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(UUO_JASN_Everything, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2
+
+UUO_JASN_Everything <- NormalizeData(UUO_JASN_Everything, normalization.method = "LogNormalize", scale.factor = 10000)
+
+UUO_JASN_Everything <- FindVariableFeatures(UUO_JASN_Everything, selection.method = "vst", nfeatures = 2000)
+
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(UUO_JASN_Everything), 10)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(UUO_JASN_Everything)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot1 + plot2
+
+all.genes.UUO <- rownames(UUO_JASN_Everything)
+UUO_JASN_Everything <- ScaleData(UUO_JASN_Everything, features = all.genes.UUO)
+
+UUO_JASN_Everything <- RunPCA(UUO_JASN_Everything, features = VariableFeatures(object = UUO_JASN_Everything))
+
+print(UUO_JASN_Everything[["pca"]], dims = 1:2, nfeatures = 5)
+
+VizDimLoadings(UUO_JASN_Everything, dims = 1:2, reduction = "pca")
+
+DimPlot(UUO_JASN_Everything, reduction = "pca")
+
+DimHeatmap(UUO_JASN_Everything, dims = 1, cells = 500, balanced = TRUE)
+
+ElbowPlot(UUO_JASN_Everything)
+
+UUO_JASN_Everything <- FindNeighbors(UUO_JASN_Everything, dims = 1:15)
+UUO_JASN_Everything <- FindClusters(UUO_JASN_Everything, resolution = 0.15)
+
+head(Idents(UUO_JASN_Everything), 5)
+
+UUO_JASN_Everything <- RunUMAP(UUO_JASN_Everything, dims = 1:15)
+
+DimPlot(UUO_JASN_Everything, reduction = "umap")
+
+FeaturePlot(UUO_JASN_Everything, features = c("Pdgfrb"))
+
+VlnPlot(UUO_JASN_Everything, features = c("Cnn1"))
+
+#Rename the clusters
+new.cluster.ids.UUO <- c("PT", "DCT", "Myeloid 1", "Myeloid 2", "iPT", "Endothelial", "NKT", "CD", "Mesenchymal 1", "Mesenchymal 2")
+names(new.cluster.ids.UUO) <- levels(UUO_JASN_Everything)
+UUO_JASN_Everything <- RenameIdents(UUO_JASN_Everything, new.cluster.ids.UUO)
+DimPlot(UUO_JASN_Everything, reduction = "umap", label = TRUE, pt.size = 0.5) + NoLegend()
+
+#The order is off - change the order
+UUO_JASN_Everything$time.point <- factor(x = UUO_JASN_Everything$time.point, levels = c('Sham', 'Day 2', 'Day 7'))
+
+#Change the order of the groups
+levels(UUO_JASN_Everything) <- c("NKT", "Myeloid 2", "Myeloid 1", "Mesenchymal 2", "Mesenchymal 1", "Endothelial", "CD", "DCT", "iPT", "PT")
+
+UUO_JASN_Everything_DotPlot <- DotPlot(UUO_JASN_Everything, col.min = 0,
+                                               col.max = 2.5, cols = c("white", "blue"), scale.min = 0,
+                                               scale.max = 80,
+                                               dot.min = 0, features = c("Lrp2", "Havcr1", "Umod", "Slc26a4", "Kit", "Emcn", "Pdgfrb", "Dcn", "Acta2", "Ptprc", "Cx3cr1", "Cd3g"))
+
+UUO_JASN_Everything_DotPlot + RotatedAxis() + xlab(NULL) +  ylab(NULL) + NoLegend()
+
+#Pull out immune and mesenchymal clusters
+Immune_Mesenchymal_UUO_JASN <-subset(UUO_JASN_Everything, idents = c("Myeloid1", "Myeloid2", "NKT", "Mesenchymal1", "Mesenchymal2"))
+
+#Recluster the immune and mesenchymal clusters
+all.genes.UUO.Immune.Mesenchymal <- rownames(Immune_Mesenchymal_UUO_JASN)
+Immune_Mesenchymal_UUO_JASN <- ScaleData(Immune_Mesenchymal_UUO_JASN, features = all.genes.UUO.Immune.Mesenchymal)
+
+Immune_Mesenchymal_UUO_JASN <- RunPCA(Immune_Mesenchymal_UUO_JASN, features = VariableFeatures(object = Immune_Mesenchymal_UUO_JASN))
+
+print(Immune_Mesenchymal_UUO_JASN[["pca"]], dims = 1:2, nfeatures = 5)
+
+VizDimLoadings(Immune_Mesenchymal_UUO_JASN, dims = 1:2, reduction = "pca")
+
+DimPlot(Immune_Mesenchymal_UUO_JASN, reduction = "pca")
+
+DimHeatmap(Immune_Mesenchymal_UUO_JASN, dims = 1, cells = 500, balanced = TRUE)
+
+ElbowPlot(Immune_Mesenchymal_UUO_JASN)
+
+Immune_Mesenchymal_UUO_JASN <- FindNeighbors(Immune_Mesenchymal_UUO_JASN, dims = 1:20)
+Immune_Mesenchymal_UUO_JASN <- FindClusters(Immune_Mesenchymal_UUO_JASN, resolution = 0.35)
+
+head(Idents(Immune_Mesenchymal_UUO_JASN), 5)
+
+Immune_Mesenchymal_UUO_JASN <- RunUMAP(Immune_Mesenchymal_UUO_JASN, dims = 1:20)
+
+DimPlot(Immune_Mesenchymal_UUO_JASN, reduction = "umap")
+
+#Rename the clusters
+new.cluster.ids.UUO.Immune.Mesenchymal <- c("Resident Mac 1", "cDC2", "T-cell", "Arg1+ Mac", "Ly6c+ Mono", "Resident Mac 2", "Proliferating Myeloid", "Dediff PT", "cDC1", "Pericyte", "Myofibroblast", "NK", "Neutrophil", "Ccr7+ DC", "VSMC")
+names(new.cluster.ids.UUO.Immune.Mesenchymal) <- levels(Immune_Mesenchymal_UUO_JASN)
+Immune_Mesenchymal_UUO_JASN <- RenameIdents(Immune_Mesenchymal_UUO_JASN, new.cluster.ids.UUO.Immune.Mesenchymal)
+DimPlot(Immune_Mesenchymal_UUO_JASN, reduction = "umap", label = TRUE, pt.size = 0.5) + NoLegend()
+Immune_Mesenchymal_UUO_JASN <- StashIdent(object = Immune_Mesenchymal_UUO_JASN, save.name = "CellType")
+
+#Change the order
+levels(Immune_Mesenchymal_UUO_JASN) <- c("Dediff PT", "VSMC", "Pericyte", "Myofibroblast", "NK", "T-cell", "Ccr7+ DC", "cDC2", "cDC1", "Neutrophil", "Proliferating Myeloid", "Ly6c+ Mono", "Arg1+ Mac", "Resident Mac 2", "Resident Mac 1")
+
+Immune_Mesenchymal_UUO_JASN_DotPlot <- DotPlot(Immune_Mesenchymal_UUO_JASN, col.min = 0,
+        col.max = 2.5, cols = c("white", "blue"), scale.min = 0,
+        scale.max = 80,
+        dot.min = 0, features = c("Itgam","Cx3cr1", "C1qa", "Arg1", "Ly6c2", "Mki67", "S100a9", "Snx22", "Cd209a", "Ccr7", "Cd3g", "Gzma", "Pdgfrb", "Dcn", "Agtr1a", "Acta2", "Aqp1", "Pax2", "Pax8"))
+
+Immune_Mesenchymal_UUO_JASN_DotPlot + RotatedAxis() + xlab(NULL) +  ylab(NULL) + NoLegend()
+
+#Plot the ECM.Associated Score = "Fibrosis.Promoting"
+VlnPlot(Immune_Mesenchymal_UUO_JASN, features = c("Fibrosis.Promoting"), split.by = "time.point", group.by = "CellType") +
+  stat_summary(fun = median,  geom = "crossbar",  fun.min = median, fun.max = median, width = 0.75, position = position_dodge(width = 0.9)) + NoLegend()
+
+#Do this in only the immune cells
+UUO_Immune <- subset(Immune_Mesenchymal_UUO_JASN, idents = c("Resident Mac 1", "cDC2", "T-cell", "Arg1+ Mac", "Ly6c+ Mono", "Resident Mac 2", "Proliferating Myeloid","cDC1", "NK", "Neutrophil", "Ccr7+ DC"))
+
+VlnPlot(UUO_Immune, features = c("Fibrosis.Promoting"), split.by = "time.point", group.by = "CellType") +
+  stat_summary(fun = median,  geom = "crossbar",  fun.min = median, fun.max = median, width = 0.75, position = position_dodge(width = 0.9)) + NoLegend()
+
+UUO_Immune@meta.data
+
+#Make an object out of only the immune cells
+Immune_only_UUO_JASN <-subset(Immune_Mesenchymal_UUO_JASN, idents = c("Resident Mac 1", "cDC2", "T-cell", "Arg1+ Mac", "Ly6c+ Mono", "Resident Mac 2", "Proliferating Myeloid","cDC1", "NK", "Neutrophil", "Ccr7+ DC"))
+
+#Plot the ECM.Associated Score = "Fibrosis.Promoting"
+####Need to remove groups with very few cells
+VlnPlot(Immune_only_UUO_JASN, features = c("Fibrosis.Promoting"), split.by = "time.point", group.by = "CellType") +
+  stat_summary(fun = median,  geom = "crossbar",  fun.min = median, fun.max = median, width = 0.75, position = position_dodge(width = 0.9)) + NoLegend()
+
+#Make a CellChat object out of the UUO Mesenchymal/Immune
+
+cellchat_Immune_Mesenchymal_UUO_JASN <- createCellChat(object = Immune_Mesenchymal_UUO_JASN, group.by = "ident")
+
+#Add cell information into meta slot of the object
+cellchat_Immune_Mesenchymal_UUO_JASN <- setIdent(cellchat_Immune_Mesenchymal_UUO_JASN, ident.use = "ident") # set "labels" as default cell identity
+levels(cellchat_Immune_Mesenchymal_UUO_JASN@idents) # show factor levels of the cell labels
+groupSize_UUO <- as.numeric(table(cellchat_Immune_Mesenchymal_UUO_JASN@idents)) # number of cells in each cell group
+
+CellChatDB <- CellChatDB.mouse
+showDatabaseCategory(CellChatDB)
+
+# Can use a subset of CellChatDB for cell-cell communication analysis
+# CellChatDB.use <- subsetDB(CellChatDB, search = "Secreted Signaling") # use Secreted Signaling
+# However, I will use all CellChatDB for cell-cell communication analysis
+
+CellChatDB.use <- CellChatDB # simply use the default CellChatDB
+
+# set the used database in the object
+cellchat_Immune_Mesenchymal_UUO_JASN@DB <- CellChatDB.use
+
+# subset the expression data of signaling genes for saving computation cost
+cellchat_Immune_Mesenchymal_UUO_JASN <- subsetData(cellchat_Immune_Mesenchymal_UUO_JASN)
+
+# do parallel
+future::plan("multiprocess", workers = 4)
+
+#Preprocessing the expression data for cell-cell communication analysis
+cellchat_Immune_Mesenchymal_UUO_JASN <- identifyOverExpressedGenes(cellchat_Immune_Mesenchymal_UUO_JASN)
+cellchat_Immune_Mesenchymal_UUO_JASN <- identifyOverExpressedInteractions(cellchat_Immune_Mesenchymal_UUO_JASN)
+cellchat_Immune_Mesenchymal_UUO_JASN <- projectData(cellchat_Immune_Mesenchymal_UUO_JASN, PPI.mouse)
+
+#Compute the communication probability and infer cellular communication network
+#VERY LONG STEP
+cellchat_Immune_Mesenchymal_UUO_JASN <- computeCommunProb(cellchat_Immune_Mesenchymal_UUO_JASN, raw.use = TRUE)
+
+#Infer the cell-cell communication at a signaling pathway level
+cellchat_Immune_Mesenchymal_UUO_JASN <- computeCommunProbPathway(cellchat_Immune_Mesenchymal_UUO_JASN)
+
+#Calculate the aggregated cell-cell communication network
+cellchat_Immune_Mesenchymal_UUO_JASN <- aggregateNet(cellchat_Immune_Mesenchymal_UUO_JASN)
+
+#Visualize the aggregated cell-cell communication network, showing the number of interactions 
+#or the total interaction strength (weights) between any two cell groups using circle plot.
+groupSize_UUO <- as.numeric(table(cellchat_Immune_Mesenchymal_UUO_JASN@idents))
+par(mfrow = c(1,2), xpd=TRUE)
+netVisual_circle(cellchat_Immune_Mesenchymal_UUO_JASN@net$count, vertex.weight = groupSize_UUO, weight.scale = T, label.edge= F, vertex.label.cex = 0.000001, margin = 0.005)
+netVisual_circle(cellchat_Immune_Mesenchymal_UUO_JASN@net$weight, vertex.weight = groupSize_UUO, weight.scale = T, label.edge= F, title.name = "Interaction weights/strength")
+
+#Due to the complicated cell-cell communication network, we can examine the signaling sent from each cell group.
+mat_UUO <- cellchat_Immune_Mesenchymal_UUO_JASN@net$weight
+par(mfrow = c(3,4), xpd=TRUE)
+for (i in 1:nrow(mat)) {
+  mat_UUO_2 <- matrix(0, nrow = nrow(mat_UUO), ncol = ncol(mat_UUO), dimnames = dimnames(mat_UUO))
+  mat_UUO_2[i, ] <- mat[i, ]
+  netVisual_circle(mat2, vertex.weight = groupSize, weight.scale = T, edge.weight.max = max(mat_UUO), title.name = rownames(mat_UUO)[i])
+}
+
+#Determine the signifantly regulated signaling pathways
+cellchat_Immune_Mesenchymal_UUO_JASN@netP$pathways
+
+
+pathways.show <- c("PARs") 
+par(mfrow=c(1,1))
+netVisual_aggregate(cellchat_Immune_Mesenchymal_UUO_JASN, signaling = pathways.show, layout = "circle", vertex.label.cex = 0.000001, margin = 0.005)
+
+#Compute the contribution of each ligand-receptor pair to the overall signaling pathway and visualize cell-cell communication mediated by a single ligand-receptor pair
+netAnalysis_contribution(cellchat_Immune_Mesenchymal_UUO_JASN, signaling = pathways.show)
+netAnalysis_contribution(cellchat_Immune_Mesenchymal_UUO_JASN, signaling = pathways.show)
+Cellchat_UUO_netP <- cellchat_Immune_Mesenchymal_UUO_JASN@netP
+write.csv(cellchat_Immune_Mesenchymal_UUO_JASN@NP$pathways, vars = c("TGFb"), "Cellchat_UUO_net.csv")
+
+
+#Check out the average expression of Gzma over time
+VlnPlot(NK_UUO, features = c("Gzma"), group.by = "time.point") +
+  stat_summary(fun = median,  geom = "crossbar",  fun.min = median, fun.max = median, width = 0.75, position = position_dodge(width = 0.9)) + NoLegend()
+
+#######################################################
+######MOVE ON TO THE POTTER LAB JASN IRI DATASET#######
+
+#Load the Sham dataset
+Potter_IRI_Sham.data <- read.table(file = "Hutchens Lab/ScRNASeq/GSE139506_RAW/GSM4142623_CONTROL_dge.txt", header = TRUE, row.names = 1, colClasses =c("character", rep("numeric")))
+
+#Create a Seurat Object
+Potter_IRI_Sham <- CreateSeuratObject(counts = Potter_IRI_Sham.data, min.cells = 3, min.genes = 200, project = "Potter_IRI")
+Potter_IRI_Sham
+
+#An object of class Seurat 
+#18745 features across 6745 samples within 1 assay 
+#Active assay: RNA (18745 features, 0 variable features)
+
+#Add meta data so you can pull out the cells based on the time point
+Potter_IRI_Sham <- AddMetaData(object = Potter_IRI_Sham, metadata = "Sham", col.name = "time.point")
+Potter_IRI_Sham <- AddMetaData(object = Potter_IRI_Sham, metadata = "Healthy", col.name = "disease.state")
+Potter_IRI_Sham@meta.data
+
+#Load the Day 1 dataset
+Potter_IRI_Day1.data <- read.table(file = "Hutchens Lab/ScRNASeq/GSE139506_RAW/GSM4142624_DAY1_dge.txt", header = TRUE, row.names = 1, colClasses =c("character", rep("numeric")))
+
+#Create a Seurat Object
+Potter_IRI_Day1 <- CreateSeuratObject(counts = Potter_IRI_Day1.data, min.cells = 3, min.genes = 200, project = "Potter_IRI")
+Potter_IRI_Day1
+
+#An object of class Seurat 
+#17837 features across 3585 samples within 1 assay 
+#Active assay: RNA (17837 features, 0 variable features)
+
+#Add meta data so you can pull out the cells based on the time point
+Potter_IRI_Day1 <- AddMetaData(object = Potter_IRI_Day1, metadata = "Day 1", col.name = "time.point")
+Potter_IRI_Day1 <- AddMetaData(object = Potter_IRI_Day1, metadata = "Disease", col.name = "disease.state")
+Potter_IRI_Day1@meta.data
+
+#Load the Day 2 dataset
+Potter_IRI_Day2.data <- read.table(file = "Hutchens Lab/ScRNASeq/GSE139506_RAW/GSM4142625_DAY2_dge.txt", header = TRUE, row.names = 1, colClasses =c("character", rep("numeric")))
+
+#Create a Seurat Object
+Potter_IRI_Day2 <- CreateSeuratObject(counts = Potter_IRI_Day2.data, min.cells = 3, min.genes = 200, project = "Potter_IRI")
+Potter_IRI_Day2
+
+#An object of class Seurat 
+#18156 features across 4115 samples within 1 assay 
+#Active assay: RNA (18156 features, 0 variable features)
+
+#Add meta data so you can pull out the cells based on the time point
+Potter_IRI_Day2 <- AddMetaData(object = Potter_IRI_Day2, metadata = "Day 2", col.name = "time.point")
+Potter_IRI_Day2 <- AddMetaData(object = Potter_IRI_Day2, metadata = "Disease", col.name = "disease.state")
+Potter_IRI_Day2@meta.data
+
+
+#Load the Day 4 dataset
+Potter_IRI_Day4.data <- read.table(file = "Hutchens Lab/ScRNASeq/GSE139506_RAW/GSM4142626_DAY4_dge.txt", header = TRUE, row.names = 1, colClasses =c("character", rep("numeric")))
+
+#Create a Seurat Object
+Potter_IRI_Day4 <- CreateSeuratObject(counts = Potter_IRI_Day4.data, min.cells = 3, min.genes = 200, project = "Potter_IRI")
+Potter_IRI_Day4
+
+#An object of class Seurat 
+#18469 features across 6420 samples within 1 assay 
+#Active assay: RNA (18469 features, 0 variable features)
+
+#Add meta data so you can pull out the cells based on the time point
+Potter_IRI_Day4 <- AddMetaData(object = Potter_IRI_Day4, metadata = "Day 4", col.name = "time.point")
+Potter_IRI_Day4 <- AddMetaData(object = Potter_IRI_Day4, metadata = "Disease", col.name = "disease.state")
+Potter_IRI_Day4@meta.data
+
+#Load the first Day 7 dataset
+Potter_IRI_Day7_1.data <- read.table(file = "Hutchens Lab/ScRNASeq/GSE139506_RAW/GSM4142627_DAY7_1_dge.txt", header = TRUE, row.names = 1, colClasses =c("character", rep("numeric")))
+
+#Create a Seurat Object
+Potter_IRI_Day7_1 <- CreateSeuratObject(counts = Potter_IRI_Day7_1.data, min.cells = 3, min.genes = 200, project = "Potter_IRI")
+Potter_IRI_Day7_1
+
+#An object of class Seurat 
+#17304 features across 3621 samples within 1 assay 
+#Active assay: RNA (17304 features, 0 variable features)
+
+#Load the second Day 7 dataset
+Potter_IRI_Day7_2.data <- read.table(file = "Hutchens Lab/ScRNASeq/GSE139506_RAW/GSM4142628_DAY7_2_dge.txt", header = TRUE, row.names = 1, colClasses =c("character", rep("numeric")))
+
+#Create a Seurat Object
+Potter_IRI_Day7_2 <- CreateSeuratObject(counts = Potter_IRI_Day7_2.data, min.cells = 3, min.genes = 200, project = "Potter_IRI")
+Potter_IRI_Day7_2
+
+#An object of class Seurat 
+#18595 features across 5156 samples within 1 assay 
+#Active assay: RNA (18595 features, 0 variable features)
+
+#Merge the two 7 day datasets into one 
+
+Potter_IRI_Day7 <- merge(Potter_IRI_Day7_1, y = c(Potter_IRI_Day7_2), project = "Potter_IRI")
+Potter_IRI_Day7
+
+#An object of class Seurat 
+#19089 features across 8777 samples within 1 assay 
+#Active assay: RNA (19089 features, 0 variable features)
+
+#Add meta data so you can pull out the cells based on the time point
+Potter_IRI_Day7 <- AddMetaData(object = Potter_IRI_Day7, metadata = "Day 7", col.name = "time.point")
+Potter_IRI_Day7 <- AddMetaData(object = Potter_IRI_Day7, metadata = "Disease", col.name = "disease.state")
+Potter_IRI_Day7@meta.data
+
+#Load the first Day 11 dataset
+Potter_IRI_Day11_1.data <- read.table(file = "Hutchens Lab/ScRNASeq/GSE139506_RAW/GSM4142629_DAY11_1_dge.txt", header = TRUE, row.names = 1, colClasses =c("character", rep("numeric")))
+
+#Create a Seurat Object
+Potter_IRI_Day11_1 <- CreateSeuratObject(counts = Potter_IRI_Day11_1.data, min.cells = 3, min.genes = 200, project = "Potter_IRI")
+Potter_IRI_Day11_1
+
+#An object of class Seurat 
+#17102 features across 10800 samples within 1 assay 
+#Active assay: RNA (17102 features, 0 variable features)
+
+#Load the second Day 11 dataset
+Potter_IRI_Day11_2.data <- read.table(file = "Hutchens Lab/ScRNASeq/GSE139506_RAW/GSM4142630_DAY11_2_dge.txt", header = TRUE, row.names = 1, colClasses =c("character", rep("numeric")))
+
+#Create a Seurat Object
+Potter_IRI_Day11_2 <- CreateSeuratObject(counts = Potter_IRI_Day11_2.data, min.cells = 3, min.genes = 200, project = "Potter_IRI")
+Potter_IRI_Day11_2
+
+#An object of class Seurat 
+#16878 features across 10711 samples within 1 assay 
+#Active assay: RNA (16878 features, 0 variable features)
+
+#Merge the two 11 day datasets into one 
+
+Potter_IRI_Day11 <- merge(Potter_IRI_Day11_1, y = c(Potter_IRI_Day11_2), project = "Potter_IRI")
+Potter_IRI_Day11
+
+#An object of class Seurat 
+#17912 features across 21511 samples within 1 assay 
+#Active assay: RNA (17912 features, 0 variable features)
+
+#Add meta data so you can pull out the cells based on the time point
+Potter_IRI_Day11 <- AddMetaData(object = Potter_IRI_Day11, metadata = "Day 11", col.name = "time.point")
+Potter_IRI_Day11 <- AddMetaData(object = Potter_IRI_Day11, metadata = "Disease", col.name = "disease.state")
+Potter_IRI_Day11@meta.data
+
+#Load the first Day 14 dataset
+Potter_IRI_Day14_1.data <- read.table(file = "Hutchens Lab/ScRNASeq/GSE139506_RAW/GSM4142631_DAY14_1_dge.txt", header = TRUE, row.names = 1, colClasses =c("character", rep("numeric")))
+
+#Create a Seurat Object
+Potter_IRI_Day14_1 <- CreateSeuratObject(counts = Potter_IRI_Day14_1.data, min.cells = 3, min.genes = 200, project = "Potter_IRI")
+Potter_IRI_Day14_1
+
+#An object of class Seurat 
+#17019 features across 7206 samples within 1 assay 
+#Active assay: RNA (17019 features, 0 variable features)
+
+#Load the second Day 14 dataset
+Potter_IRI_Day14_2.data <- read.table(file = "Hutchens Lab/ScRNASeq/GSE139506_RAW/GSM4142632_DAY14_2_dge.txt", header = TRUE, row.names = 1, colClasses =c("character", rep("numeric")))
+
+#Create a Seurat Object
+Potter_IRI_Day14_2 <- CreateSeuratObject(counts = Potter_IRI_Day14_2.data, min.cells = 3, min.genes = 200, project = "Potter_IRI")
+Potter_IRI_Day14_2
+
+#An object of class Seurat 
+#16717 features across 6444 samples within 1 assay 
+#Active assay: RNA (16717 features, 0 variable features)
+
+#Merge the two 14 day datasets into one 
+
+Potter_IRI_Day14 <- merge(Potter_IRI_Day14_1, y = c(Potter_IRI_Day14_2), project = "Potter_IRI")
+Potter_IRI_Day14
+
+#An object of class Seurat 
+#17684 features across 13650 samples within 1 assay 
+#Active assay: RNA (17684 features, 0 variable features)
+
+#Add meta data so you can pull out the cells based on the time point
+Potter_IRI_Day14 <- AddMetaData(object = Potter_IRI_Day14, metadata = "Day 14", col.name = "time.point")
+Potter_IRI_Day14 <- AddMetaData(object = Potter_IRI_Day14, metadata = "Disease", col.name = "disease.state")
+Potter_IRI_Day14@meta.data
+
+#merge all of datasets
+
+Potter_IRI_Everything <- merge(x = Potter_IRI_Sham, y = c(Potter_IRI_Day1, Potter_IRI_Day2, Potter_IRI_Day4, Potter_IRI_Day7, Potter_IRI_Day11, Potter_IRI_Day14), add.cell.ids = c("Potter_IRI_Sham", "Potter_IRI_Day1", "Potter_IRI_Day2", "Potter_IRI_Day4", "Potter_IRI_Day7", "Potter_IRI_Day11", "Potter_IRI_Day14"), merge.data=TRUE)
+Potter_IRI_Everything
+Potter_IRI_Everything@meta.data
+
+#An object of class Seurat 
+#21458 features across 64803 samples within 1 assay 
+#Active assay: RNA (21458 features, 0 variable features)
+
+#QC: limit the number of mitogenes
+
+Potter_IRI_Everything[["percent.mt"]] <- PercentageFeatureSet(Potter_IRI_Everything, pattern = "^mt-")
+
+VlnPlot(Potter_IRI_Everything, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+
+#Decided to limit "percent.mt" to <75%, "nFeature_RNA" to >150 and <8000, and "nCount_RNA" to <30000. This is arbitrary. 
+Potter_IRI_Everything <- subset(Potter_IRI_Everything, subset = nFeature_RNA > 150 & nFeature_RNA < 8000 & percent.mt < 75 & nCount_RNA < 50000)
+
+VlnPlot(Potter_IRI_Everything, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+Potter_IRI_Everything
+
+#An object of class Seurat 
+#21458 features across 64657 samples within 1 assay 
+#Active assay: RNA (21458 features, 0 variable features)
+
+# FeatureScatter is typically used to visualize feature-feature relationships, but can be used
+# for anything calculated by the object, i.e. columns in object metadata, PC scores etc.
+
+plot1 <- FeatureScatter(Potter_IRI_Everything, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(Potter_IRI_Everything, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2
+
+#Increase the max size of globals for the normalization (https://stackoverflow.com/questions/40536067/how-to-adjust-future-global-maxsize-in-r)
+options(future.globals.maxSize= 891289600)
+
+#Normalize the data
+Potter_IRI_Everything <- NormalizeData(Potter_IRI_Everything, normalization.method = "LogNormalize", scale.factor = 10000)
+
+Potter_IRI_Everything <- FindVariableFeatures(Potter_IRI_Everything, selection.method = "vst", nfeatures = 2000)
+
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(Potter_IRI_Everything), 10)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(Potter_IRI_Everything)
+LabelPoints(plot = plot1, points = top10, repel = TRUE, xnudge = 0, ynudge = 0)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE,xnudge=0,ynudge=0)
+LabelPoints(plot = plot2, points = top10, repel = TRUE, xnudge = 0, ynudge = 0)
+plot1 + plot2
+
+all.genes.Potter.IRI <- row.names(Potter_IRI_Everything)
+Potter_IRI_Everything <- ScaleData(Potter_IRI_Everything, features = all.genes.Potter.IRI)
+
+#Ran out of vertor memory here. Need to increase vector memory
+
+Potter_IRI_Everything <- RunPCA(Potter_IRI_Everything, features = VariableFeatures(object = Potter_IRI_Everything))
+
+print(Potter_IRI_Everything[["pca"]], dims = 1:2, nfeatures = 5)
+
+#Note: can tweak the dims in the line below to deal with batch effect, if it is present
+
+VizDimLoadings(Potter_IRI_Everything, dims = 1:2, reduction = "pca")
+
+DimPlot(Potter_IRI_Everything, reduction = "pca")
+
+DimHeatmap(Potter_IRI_Everything, dims = 1, cells = 500, balanced = TRUE)
+
+ElbowPlot(Potter_IRI_Everything)
+
+#Low resolution clustering to start
+
+Potter_IRI_Everything <- FindNeighbors(Potter_IRI_Everything, dims = 1:15)
+Potter_IRI_Everything <- FindClusters(Potter_IRI_Everything, resolution = 0.15)
+
+Potter_IRI_Everything <- RunUMAP(Potter_IRI_Everything, dims = 1:15)
+
+DimPlot(Potter_IRI_Everything, reduction = "umap")
+
+FeaturePlot(Potter_IRI_Everything, features = c("Ptprc"))
+
+VlnPlot(Potter_IRI_Everything, features = c("Ptprc")) + NoLegend()
+
+#Rename the clusters
+new.cluster.ids.Potter.IRI <- c("PT1", "PT2", "iPT", "CD1", "LOH", "Myeloid Immune", "Endothelial", "PT3", "CD2", "Mesenchymal 1", "Lymphoid Immune", "Podocyte", "Mesenchymal 2")
+names(new.cluster.ids.Potter.IRI) <- levels(Potter_IRI_Everything)
+Potter_IRI_Everything <- RenameIdents(Potter_IRI_Everything, new.cluster.ids.Potter.IRI)
+DimPlot(Potter_IRI_Everything, reduction = "umap", label = TRUE, pt.size = 0.5) + NoLegend()
+
+#The order is off - change the order
+Potter_IRI_Everything$time.point <- factor(x = Potter_IRI_Everything$time.point, levels = c('Sham', 'Day 1', 'Day 2', 'Day 4', 'Day 7', 'Day 11', 'Day 14'))
+
+#Change the order of the groups
+levels(Potter_IRI_Everything) <- c("Lymphoid Immune", "Myeloid Immune", "Mesenchymal 2", "Mesenchymal 1", "Endothelial", "CD2", "CD1", "LOH", "Podocyte", "iPT", "PT3", "PT2", "PT1")
+
+Potter_IRI_Everything_DotPlot <- DotPlot(Potter_IRI_Everything, col.min = 0,
+                                       col.max = 2.5, cols = c("white", "blue"), scale.min = 0,
+                                       scale.max = 80,
+                                       dot.min = 0, features = c("Lrp2", "Havcr1", "Nphs2","Umod", "Slc12a1", "Slc26a4", "Aqp2", "Kit", "Emcn", "Pdgfrb", "Dcn", "Acta2", "Ptprc", "Cx3cr1", "Cd3g"))
+
+Potter_IRI_Everything_DotPlot + RotatedAxis() + xlab(NULL) +  ylab(NULL) + NoLegend()
+
+#Plot the ECM.Associated Score = "Fibrosis.Promoting"
+VlnPlot(Potter_IRI_Everything, features = c("Fibrosis.Promoting"), split.by = "time.point", group.by = "CellType",  pt.size = 0) +
+  stat_summary(fun = median,  geom = "crossbar",  fun.min = median, fun.max = median, width = 0.75, position = position_dodge(width = 0.9)) + NoLegend()
+
+#Pull out immune and mesenchymal clusters
+Potter_IRI_Immune_Mesenchymal <-subset(Potter_IRI_Everything, idents = c("Lymphoid Immune", "Myeloid Immune", "Mesenchymal 1", "Mesenchymal 2"))
+
+#Recluster the immune and mesenchymal clusters - high resolution clustering
+genes.Potter.IRI.Immune.Mesenchymal <- rownames(Potter_IRI_Immune_Mesenchymal)
+Potter_IRI_Immune_Mesenchymal <- ScaleData(Potter_IRI_Immune_Mesenchymal, features = genes.Potter.IRI.Immune.Mesenchymal)
+
+Potter_IRI_Immune_Mesenchymal <- RunPCA(Potter_IRI_Immune_Mesenchymal, features = VariableFeatures(object = Potter_IRI_Immune_Mesenchymal))
+
+print(Potter_IRI_Immune_Mesenchymal[["pca"]], dims = 1:2, nfeatures = 5)
+
+VizDimLoadings(Potter_IRI_Immune_Mesenchymal, dims = 1:2, reduction = "pca")
+
+DimPlot(Potter_IRI_Immune_Mesenchymal, reduction = "pca")
+
+DimHeatmap(Potter_IRI_Immune_Mesenchymal, dims = 1, cells = 500, balanced = TRUE)
+
+ElbowPlot(Potter_IRI_Immune_Mesenchymal)
+
+Potter_IRI_Immune_Mesenchymal <- FindNeighbors(Potter_IRI_Immune_Mesenchymal, dims = 1:20)
+Potter_IRI_Immune_Mesenchymal <- FindClusters(Potter_IRI_Immune_Mesenchymal, resolution = 0.35)
+
+Potter_IRI_Immune_Mesenchymal <- RunUMAP(Potter_IRI_Immune_Mesenchymal, dims = 1:20)
+
+DimPlot(Potter_IRI_Immune_Mesenchymal, reduction = "umap")
+
+FeaturePlot(Potter_IRI_Immune_Mesenchymal, features = c("Cd8a"))
+
+VlnPlot(Potter_IRI_Immune_Mesenchymal, features = c("Ccr2"))
+
+# find all markers of cluster 12
+cluster8.Potter.IRI.markers <- FindMarkers(Potter_IRI_Immune_Mesenchymal, ident.1 = 12, min.pct = 0.25)
+head(cluster8.Potter.IRI.markers, n = 50)
+
+#Rename the clusters
+new.cluster.ids.Potter.IRI.Immune.Mesenchymal <- c("Resident Mac 1", "DC", "Pericyte", "NKT", "Arg1+ Mac", "Proliferating Myeloid", "VSMC", "Resident Mac 2", "Ly6c+ Mono", "Myofibroblast", "Mesangial", "PEC", "Dediff PT", "Proliferating Lymphoid", "Resident Mac 3", "B-cell", "Neutrophil")
+names(new.cluster.ids.Potter.IRI.Immune.Mesenchymal) <- levels(Potter_IRI_Immune_Mesenchymal)
+Potter_IRI_Immune_Mesenchymal <- RenameIdents(Potter_IRI_Immune_Mesenchymal, new.cluster.ids.Potter.IRI.Immune.Mesenchymal)
+DimPlot(Potter_IRI_Immune_Mesenchymal, reduction = "umap", label = TRUE, pt.size = 0.5) + NoLegend()
+Potter_IRI_Immune_Mesenchymal[["CellType"]] <- Idents(object = Potter_IRI_Immune_Mesenchymal)
+
+#Change the order of the groups
+levels(Potter_IRI_Immune_Mesenchymal) <- c("Dediff PT", "PEC", "VSMC", "Mesangial", "Pericyte", "Myofibroblast", "B-cell", "NKT", "Proliferating Lymphoid", "Proliferating Myeloid", "Neutrophil", "DC", "Arg1+ Mac", "Ly6c+ Mono", "Resident Mac 3", "Resident Mac 2", "Resident Mac 1")
+
+Potter_IRI_Immune_Mesenchymal_DotPlot <- DotPlot(Potter_IRI_Immune_Mesenchymal, col.min = 0,
+                                         col.max = 2.5, cols = c("white", "blue"), scale.min = 0,
+                                         scale.max = 80,
+                                         dot.min = 0, features = c("Itgam","Cx3cr1", "C1qa", "Ly6c2", "Arg1", "Cd209a", "S100a9", "Mki67", "Cd3g", "Gzma", "Cd79a", "Pdgfrb", "Dcn", "Agtr1a", "Acta2", "Gja5", "Aqp1", "Lrp2"))
+
+Potter_IRI_Immune_Mesenchymal_DotPlot + RotatedAxis() + xlab(NULL) +  ylab(NULL) + NoLegend()
+
+#Make a CellChat object out of the Potter IRI Mesenchymal/Immune
+
+cellchat_Potter_IRI_Immune_Mesenchymal <- createCellChat(object = Potter_IRI_Immune_Mesenchymal, group.by = "ident")
+
+#Add cell information into meta slot of the object
+cellchat_Potter_IRI_Immune_Mesenchymal <- setIdent(cellchat_Potter_IRI_Immune_Mesenchymal, ident.use = "ident") # set "labels" as default cell identity
+levels(cellchat_Potter_IRI_Immune_Mesenchymal@idents) # show factor levels of the cell labels
+groupSize_Potter_IRI <- as.numeric(table(cellchat_Potter_IRI_Immune_Mesenchymal@idents)) # number of cells in each cell group
+
+CellChatDB <- CellChatDB.mouse
+showDatabaseCategory(CellChatDB)
+
+# Can use a subset of CellChatDB for cell-cell communication analysis
+# CellChatDB.use <- subsetDB(CellChatDB, search = "Secreted Signaling") # use Secreted Signaling
+# However, I will use all CellChatDB for cell-cell communication analysis
+
+CellChatDB.use <- CellChatDB # simply use the default CellChatDB
+
+# set the used database in the object
+cellchat_Potter_IRI_Immune_Mesenchymal@DB <- CellChatDB.use
+
+# subset the expression data of signaling genes for saving computation cost
+cellchat_Potter_IRI_Immune_Mesenchymal <- subsetData(cellchat_Potter_IRI_Immune_Mesenchymal)
+
+# do parallel
+future::plan("multiprocess", workers = 4)
+
+#Preprocessing the expression data for cell-cell communication analysis
+cellchat_Potter_IRI_Immune_Mesenchymal <- identifyOverExpressedGenes(cellchat_Potter_IRI_Immune_Mesenchymal)
+cellchat_Potter_IRI_Immune_Mesenchymal <- identifyOverExpressedInteractions(cellchat_Potter_IRI_Immune_Mesenchymal)
+cellchat_Potter_IRI_Immune_Mesenchymal <- projectData(cellchat_Potter_IRI_Immune_Mesenchymal, PPI.mouse)
+
+#Compute the communication probability and infer cellular communication network
+#VERY LONG STEP
+cellchat_Potter_IRI_Immune_Mesenchymal <- computeCommunProb(cellchat_Potter_IRI_Immune_Mesenchymal, raw.use = TRUE)
+
+#Infer the cell-cell communication at a signaling pathway level
+cellchat_Potter_IRI_Immune_Mesenchymal <- computeCommunProbPathway(cellchat_Potter_IRI_Immune_Mesenchymal)
+
+#Calculate the aggregated cell-cell communication network
+cellchat_Potter_IRI_Immune_Mesenchymal <- aggregateNet(cellchat_Potter_IRI_Immune_Mesenchymal)
+
+#Visualize the aggregated cell-cell communication network, showing the number of interactions 
+#or the total interaction strength (weights) between any two cell groups using circle plot.
+groupSize_Potter_IRI <- as.numeric(table(cellchat_Potter_IRI_Immune_Mesenchymal@idents))
+par(mfrow = c(1,2), xpd=TRUE)
+netVisual_circle(cellchat_Potter_IRI_Immune_Mesenchymal@net$count, vertex.weight = groupSize_Potter_IRI, weight.scale = T, label.edge= F, vertex.label.cex = 0.000001)
+netVisual_circle(cellchat_Immune_Mesenchymal_UUO_JASN@net$count, vertex.weight = groupSize_UUO, weight.scale = T, label.edge= F, vertex.label.cex = 0.000001, margin = 0.005)
+netVisual_circle(cellchat_Potter_IRI_Immune_Mesenchymal@net$weight, vertex.weight = groupSize_Potter_IRI, weight.scale = T, label.edge= F, vertex.label.cex = 0.000001, margin = 0.005)
+
+#Due to the complicated cell-cell communication network, we can examine the signaling sent from each cell group.
+mat_IRI <- cellchat_Potter_IRI_Immune_Mesenchymal@net$weight
+par(mfrow = c(3,4), xpd=TRUE)
+for (i in 1:nrow(mat_IRI)) {
+  mat_IRI_2 <- matrix(0, nrow = nrow(mat_IRI), ncol = ncol(mat_IRI), dimnames = dimnames(mat_IRI))
+  mat_IRI_2[i, ] <- mat_IRI[i, ]
+  netVisual_circle(mat_IRI_2, vertex.weight = groupSize_Potter_IRI, weight.scale = T, edge.weight.max = max(mat_IRI), title.name = rownames(mat_IRI)[i])
+}
+
+#Determine the signifantly regulated signaling pathways
+cellchat_Potter_IRI_Immune_Mesenchymal@netP$pathways
+
+pathways.show <- c("VCAM") 
+par(mfrow=c(1,1))
+netVisual_aggregate(cellchat_Potter_IRI_Immune_Mesenchymal, signaling = pathways.show, layout = "circle")
+
+#Compute the contribution of each ligand-receptor pair to the overall signaling pathway and visualize cell-cell communication mediated by a single ligand-receptor pair
+netAnalysis_contribution(cellchat_Potter_IRI_Immune_Mesenchymal, signaling = pathways.show)
+
+
+#######################################################
+######MOVE ON TO THE Human CKD Dataset#######
+
+#Load the "human_CD10negative_final.RData" file from "https://zenodo.org/record/4059315#.YH8I_O9KjLA" to the global environment
+
+#Rownames contain ENSEMBLE ID and GENE NAME - REMOVWE THE ENSEMBLE ID
+rownames(l) <- gsub(".*;","",rownames(l))
+rownames(l)
+
+#Convert the SingleCellExperiment to a Seurat File
+HumanCD10neg <- as.Seurat(l, counts = "counts", data = NULL)
+HumanCD10neg
+
+#An object of class Seurat 
+#58228 features across 52222 samples within 1 assay 
+#Active assay: RNA (58228 features, 0 variable features)
+
+
+#Add disease state to the metadata so you can pull it out later
+#Healthy
+
+#Make an object out of CDm1
+HumanCD10neg_CDm1 <- subset(HumanCD10neg, subset = patientID == "CDm1")
+
+#Add meta data so you can pull out the cells based on healthy vs disease
+HumanCD10neg_CDm1 <- AddMetaData(object = HumanCD10neg_CDm1, metadata = "healthy", col.name = "disease.state")
+HumanCD10neg_CDm1@meta.data
+
+#Make an object out of CDm2
+HumanCD10neg_CDm2 <- subset(HumanCD10neg, subset = patientID == "CDm2")
+
+#Add meta data so you can pull out the cells based on healthy vs disease
+HumanCD10neg_CDm2 <- AddMetaData(object = HumanCD10neg_CDm2, metadata = "healthy", col.name = "disease.state")
+HumanCD10neg_CDm2@meta.data
+
+#Make an object out of CDm3
+HumanCD10neg_CDm3 <- subset(HumanCD10neg, subset = patientID == "CDm3")
+
+#Add meta data so you can pull out the cells based on healthy vs disease
+HumanCD10neg_CDm3 <- AddMetaData(object = HumanCD10neg_CDm3, metadata = "healthy", col.name = "disease.state")
+HumanCD10neg_CDm3@meta.data
+
+#Make an object out of CDm7
+HumanCD10neg_CDm7 <- subset(HumanCD10neg, subset = patientID == "CDm7")
+
+#Add meta data so you can pull out the cells based on healthy vs disease
+HumanCD10neg_CDm7 <- AddMetaData(object = HumanCD10neg_CDm7, metadata = "healthy", col.name = "disease.state")
+HumanCD10neg_CDm7@meta.data
+
+#Make an object out of CDm10
+HumanCD10neg_CDm10 <- subset(HumanCD10neg, subset = patientID == "CDm10")
+
+#Add meta data so you can pull out the cells based on healthy vs disease
+HumanCD10neg_CDm10 <- AddMetaData(object = HumanCD10neg_CDm10, metadata = "healthy", col.name = "disease.state")
+HumanCD10neg_CDm10@meta.data
+
+#Make an object out of CDm12
+HumanCD10neg_CDm12 <- subset(HumanCD10neg, subset = patientID == "CDm12")
+
+#Add meta data so you can pull out the cells based on healthy vs disease
+HumanCD10neg_CDm12 <- AddMetaData(object = HumanCD10neg_CDm12, metadata = "healthy", col.name = "disease.state")
+HumanCD10neg_CDm12@meta.data
+
+#Make an object out of CDm13
+HumanCD10neg_CDm13 <- subset(HumanCD10neg, subset = patientID == "CDm13")
+
+#Add meta data so you can pull out the cells based on healthy vs disease
+HumanCD10neg_CDm13 <- AddMetaData(object = HumanCD10neg_CDm13, metadata = "healthy", col.name = "disease.state")
+HumanCD10neg_CDm13@meta.data
+
+#Make an object out of CDp3
+HumanCD10neg_CDp3 <- subset(HumanCD10neg, subset = patientID == "CDp3")
+
+#Add meta data so you can pull out the cells based on healthy vs disease
+HumanCD10neg_CDp3 <- AddMetaData(object = HumanCD10neg_CDp3, metadata = "healthy", col.name = "disease.state")
+HumanCD10neg_CDp3@meta.data
+
+#Make an object out of CDp4
+HumanCD10neg_CDp4 <- subset(HumanCD10neg, subset = patientID == "CDp4")
+
+#Add meta data so you can pull out the cells based on healthy vs disease
+HumanCD10neg_CDp4 <- AddMetaData(object = HumanCD10neg_CDp4, metadata = "healthy", col.name = "disease.state")
+HumanCD10neg_CDp4@meta.data
+
+#Disease
+#Make an object out of CDm5
+HumanCD10neg_CDm5 <- subset(HumanCD10neg, subset = patientID == "CDm5")
+
+#Add meta data so you can pull out the cells based on healthy vs disease
+HumanCD10neg_CDm5 <- AddMetaData(object = HumanCD10neg_CDm5, metadata = "CKD", col.name = "disease.state")
+HumanCD10neg_CDm5@meta.data
+
+#Make an object out of CDm8
+HumanCD10neg_CDm8 <- subset(HumanCD10neg, subset = patientID == "CDm8")
+
+#Add meta data so you can pull out the cells based on healthy vs disease
+HumanCD10neg_CDm8 <- AddMetaData(object = HumanCD10neg_CDm8, metadata = "CKD", col.name = "disease.state")
+HumanCD10neg_CDm8@meta.data
+
+#Make an object out of CDm9
+HumanCD10neg_CDm9 <- subset(HumanCD10neg, subset = patientID == "CDm9")
+
+#Add meta data so you can pull out the cells based on healthy vs disease
+HumanCD10neg_CDm9 <- AddMetaData(object = HumanCD10neg_CDm9, metadata = "CKD", col.name = "disease.state")
+HumanCD10neg_CDm9@meta.data
+
+#Make an object out of CDm11
+HumanCD10neg_CDm11 <- subset(HumanCD10neg, subset = patientID == "CDm11")
+
+#Add meta data so you can pull out the cells based on healthy vs disease
+HumanCD10neg_CDm11 <- AddMetaData(object = HumanCD10neg_CDm11, metadata = "CKD", col.name = "disease.state")
+HumanCD10neg_CDm11@meta.data
+
+#Make an object out of CDp1
+HumanCD10neg_CDp1 <- subset(HumanCD10neg, subset = patientID == "CDp1")
+
+#Add meta data so you can pull out the cells based on healthy vs disease
+HumanCD10neg_CDp1 <- AddMetaData(object = HumanCD10neg_CDp1, metadata = "CKD", col.name = "disease.state")
+HumanCD10neg_CDp1@meta.data
+
+#Make an object out of CDp2
+HumanCD10neg_CDp2 <- subset(HumanCD10neg, subset = patientID == "CDp2")
+
+#Add meta data so you can pull out the cells based on healthy vs disease
+HumanCD10neg_CDp2 <- AddMetaData(object = HumanCD10neg_CDp2, metadata = "CKD", col.name = "disease.state")
+HumanCD10neg_CDp2@meta.data
+
+#Merge the datasets to make a new immune-mesenchymal dataset with the metadata
+HumanCD10neg_Merged <- merge(HumanCD10neg_CDm1, y = c(HumanCD10neg_CDm2, HumanCD10neg_CDm3, HumanCD10neg_CDm7, HumanCD10neg_CDm10, HumanCD10neg_CDm12, HumanCD10neg_CDm13, HumanCD10neg_CDp1, HumanCD10neg_CDp2, HumanCD10neg_CDp3, HumanCD10neg_CDp4, HumanCD10neg_CDm5, HumanCD10neg_CDm8, HumanCD10neg_CDm9, HumanCD10neg_CDm11), add.cell.ids = c("HumanCD10neg_CDm2", "HumanCD10neg_CDm3", "Immune_Mesenchymal_CDm7", "Immune_Mesenchymal_CDm10", "Immune_Mesenchymal_CDm12", "Immune_Mesenchymal_CDm13", "Immune_Mesenchymal_CDp1", "Immune_Mesenchymal_CDp2", "Immune_Mesenchymal_CDp3", "Immune_Mesenchymal_CDp4", "Immune_Mesenchymal_CDm5", "Immune_Mesenchymal_CDm8", "HumanCD10neg_CDm9", "Immune_Mesenchymal_CDm11", "Immune_Mesenchymal_CDm1"), project = "HumanCD10neg_Immune_Mesenchymal")
+HumanCD10neg_Merged
+
+#An object of class Seurat 
+#58228 features across 52222 samples within 1 assay 
+#Active assay: RNA (58228 features, 0 variable features)
+
+#NOTE: no "nCount" feature, so cannot run QC based on mitogenes, nFeatures, etc. Went right to log normalizing the data
+HumanCD10neg_Merged <- NormalizeData(HumanCD10neg_Merged, normalization.method = "LogNormalize", scale.factor = 10000)
+
+HumanCD10neg_Merged <- FindVariableFeatures(HumanCD10neg_Merged, selection.method = "vst", nfeatures = 2000)
+
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(HumanCD10neg_Merged), 10)
+
+all.genes.HumanCD10neg_Merged <- rownames(HumanCD10neg_Merged)
+HumanCD10neg_Merged <- ScaleData(HumanCD10neg_Merged, features = all.genes.HumanCD10neg_Merged)
+
+HumanCD10neg_Merged <- RunPCA(HumanCD10neg_Merged, features = VariableFeatures(object = HumanCD10neg_Merged))
+
+print(HumanCD10neg_Merged[["pca"]], dims = 1:2, nfeatures = 5)
+
+VizDimLoadings(HumanCD10neg_Merged, dims = 1:2, reduction = "pca")
+
+DimPlot(HumanCD10neg_Merged, reduction = "pca")
+
+DimHeatmap(HumanCD10neg_Merged, dims = 1, cells = 500, balanced = TRUE)
+
+ElbowPlot(HumanCD10neg_Merged)
+
+#Cluster the cells. Low resolution clustering to start
+HumanCD10neg_Merged <- FindNeighbors(HumanCD10neg_Merged, dims = 1:15)
+HumanCD10neg_Merged <- FindClusters(HumanCD10neg_Merged, resolution = 0.15)
+
+HumanCD10neg_Merged <- RunUMAP(HumanCD10neg_Merged, dims = 1:15)
+
+DimPlot(HumanCD10neg_Merged, reduction = "umap")
+
+#Renames the clusters
+new.cluster.ids <- c("End1", "IC", "Myeloid Immune", "End2", "Mesenchymal", "B-cell", "End3", "End4", "PT", "CNT", "NKT", "End5", "End6")
+names(new.cluster.ids) <- levels(HumanCD10neg_Merged)
+HumanCD10neg_Merged <- RenameIdents(HumanCD10neg_Merged, new.cluster.ids)
+DimPlot(HumanCD10neg_Merged, reduction = "umap", label = FALSE, pt.size = 0.5) + NoLegend()
+HumanCD10neg_Merged <- StashIdent(object = HumanCD10neg_Merged, save.name = "CellType")
+HumanCD10neg_Merged@meta.data
+
+#The order is off - change the order
+HumanCD10neg_Merged$disease.state <- factor(x = HumanCD10neg_Merged$disease.state, levels = c('healthy', 'CKD'))
+
+#Change the order of the groups
+levels(HumanCD10neg_Merged) <- c("B-cell", "NKT", "Myeloid Immune", "Mesenchymal", "End6", "End5", "End4", "End3", "End2", "End1", "IC", "CNT", "PT")
+
+HumanCD10neg_Merged_DotPlot <- DotPlot(HumanCD10neg_Merged, col.min = 0,
+                                       col.max = 2.5, cols = c("white", "blue"), scale.min = 0,
+                                       scale.max = 80,
+                                       dot.min = 0, features = c("EPCAM", "LRP2", "AQP2", "BSND", "ATP6V1B1", "SLC4A1", "EGFL7", "PDGFRB", "PTPRC", "AIF1", "CD3D", "GZMA", "CD79A"))
+
+HumanCD10neg_Merged_DotPlot + RotatedAxis() + xlab(NULL) +  ylab(NULL)
+
+#Now can recapitulate the ECM score data from the Kramann Paper
+#Change the order first
+HumanCD10neg_Merged$CellType <- factor(x = HumanCD10neg_Merged$CellType, levels = c('End1', 'End2', 'End3', 'End4', 'End5', 'End6', 'PT', 'IC', 'CNT', 'B-cell', 'NKT', 'Myeloid Immune', 'Mesenchymal'))
+VlnPlot(HumanCD10neg_Merged, features = c("ECM.Score"), split.by = "disease.state", group.by = "CellType", split.plot = TRUE, pt.size = 0) +
+  stat_summary(fun = median,  geom = "crossbar",  fun.min = median, fun.max = median, width = 0.65, position = position_dodge(width = 0.65)) + NoLegend()
+
+#Now we can determine which cells promote myofibroblast formation/fibrosis
+VlnPlot(HumanCD10neg_Merged, features = c("Fibrosis.Promoting"), split.by = "disease.state", group.by = "CellType", split.plot = TRUE, pt.size = 0) +
+  stat_summary(fun = median,  geom = "crossbar",  fun.min = median, fun.max = median, width = 0.65, position = position_dodge(width = 0.65)) + NoLegend()
+
+#Pull out immune and mesenchymal clusters
+HumanCD10neg_Immune_Mesenchymal <-subset(HumanCD10neg_Merged, idents = c("B-cell", "Myeloid Immune", "NKT", "Mesenchymal"))
+
+#Recluster the immune and mesenchymal clusters - high resolution clustering
+genes.CD10neg.Immune.Mesenchymal <- rownames(HumanCD10neg_Immune_Mesenchymal)
+HumanCD10neg_Immune_Mesenchymal <- ScaleData(HumanCD10neg_Immune_Mesenchymal, features = genes.CD10neg.Immune.Mesenchymal)
+
+HumanCD10neg_Immune_Mesenchymal <- RunPCA(HumanCD10neg_Immune_Mesenchymal, features = VariableFeatures(object = HumanCD10neg_Immune_Mesenchymal))
+
+print(HumanCD10neg_Immune_Mesenchymal[["pca"]], dims = 1:2, nfeatures = 5)
+
+VizDimLoadings(HumanCD10neg_Immune_Mesenchymal, dims = 1:2, reduction = "pca")
+
+DimPlot(HumanCD10neg_Immune_Mesenchymal, reduction = "pca")
+
+DimHeatmap(HumanCD10neg_Immune_Mesenchymal, dims = 1, cells = 500, balanced = TRUE)
+
+ElbowPlot(HumanCD10neg_Immune_Mesenchymal)
+
+HumanCD10neg_Immune_Mesenchymal <- FindNeighbors(HumanCD10neg_Immune_Mesenchymal, dims = 1:12)
+HumanCD10neg_Immune_Mesenchymal <- FindClusters(HumanCD10neg_Immune_Mesenchymal, resolution = 0.50)
+
+HumanCD10neg_Immune_Mesenchymal <- RunUMAP(HumanCD10neg_Immune_Mesenchymal, dims = 1:12)
+
+DimPlot(HumanCD10neg_Immune_Mesenchymal, reduction = "umap")
+
+#Rename the clusters
+#NOTE - switched Schwann and Mac/Mes - that is probably wrong, will need to figure out the identity
+new.cluster.ids.HumanCD10neg.Immune.Mesenchymal <- c("Schwann", "Mac/Mes", "VSMC", "Pericyte", "Fibroblast", "Myofibroblast", "NK", "T-cell", "Plasma", "B-cell", "Mast", "Alt Act Mac", "DC", "Inflammatory Mono", "Resident Mac 2", "Resident Mac 1")
+names(new.cluster.ids.HumanCD10neg.Immune.Mesenchymal) <- levels(HumanCD10neg_Immune_Mesenchymal)
+HumanCD10neg_Immune_Mesenchymal <- RenameIdents(HumanCD10neg_Immune_Mesenchymal, new.cluster.ids.HumanCD10neg.Immune.Mesenchymal)
+DimPlot(HumanCD10neg_Immune_Mesenchymal, reduction = "umap", label = TRUE, pt.size = 0.5) + NoLegend()
+HumanCD10neg_Immune_Mesenchymal <- StashIdent(object = HumanCD10neg_Immune_Mesenchymal, save.name = "CellType")
+
+#Change the order of the groups
+levels(HumanCD10neg_Immune_Mesenchymal) <- c("Schwann", "Mac/Mes", "VSMC", "Pericyte", "Fibroblast", "Myofibroblast", "NK", "T-cell", "Plasma", "B-cell", "Mast", "Alt Act Mac", "DC", "Inflammatory Mono", "Resident Mac 2", "Resident Mac 1")
+
+HumanCD10neg_Immune_Mesenchymal_DotPlot <- DotPlot(HumanCD10neg_Immune_Mesenchymal, col.min = 0,
+                                                   col.max = 2.5, cols = c("white", "blue"), scale.min = 0,
+                                                   scale.max = 80,
+                                                   dot.min = 0, features = c("CD14", "CX3CR1", "AIF1", "CCR2", "CD1C", "CD163", "FOLR2", "IGF1", "CD69", "MS4A2","CD79A", "CD27", "FCRL5","CD3D", "GZMA", "PDGFRB", "DCN", "COL1A1", "CXCL12", "GJA4", "ACTA2", "NRXN1", "MPZ"))
+
+HumanCD10neg_Immune_Mesenchymal_DotPlot + RotatedAxis() + xlab(NULL) +  ylab(NULL)
+
+#Make a CellChat object out of the Potter IRI Mesenchymal/Immune
+
+cellchat_HumanCD10neg_Immune_Mesenchymal <- createCellChat(object = HumanCD10neg_Immune_Mesenchymal, group.by = "ident")
+
+#Add cell information into meta slot of the object
+cellchat_HumanCD10neg_Immune_Mesenchymal <- setIdent(cellchat_HumanCD10neg_Immune_Mesenchymal, ident.use = "ident") # set "labels" as default cell identity
+levels(cellchat_HumanCD10neg_Immune_Mesenchymal@idents) # show factor levels of the cell labels
+groupSize_HumanCD10neg_Immune_Mesenchymal <- as.numeric(table(cellchat_HumanCD10neg_Immune_Mesenchymal@idents)) # number of cells in each cell group
+
+CellChatDB_human <- CellChatDB.human
+showDatabaseCategory(CellChatDB_human)
+
+# Can use a subset of CellChatDB for cell-cell communication analysis
+# CellChatDB.use <- subsetDB(CellChatDB, search = "Secreted Signaling") # use Secreted Signaling
+# However, I will use all CellChatDB for cell-cell communication analysis
+
+CellChatDB_human.use <- CellChatDB_human # simply use the default CellChatDB
+
+# set the used database in the object
+cellchat_HumanCD10neg_Immune_Mesenchymal@DB <- CellChatDB_human.use
+
+# subset the expression data of signaling genes for saving computation cost
+cellchat_HumanCD10neg_Immune_Mesenchymal <- subsetData(cellchat_HumanCD10neg_Immune_Mesenchymal)
+
+# do parallel
+future::plan("multiprocess", workers = 4)
+
+#Preprocessing the expression data for cell-cell communication analysis
+cellchat_HumanCD10neg_Immune_Mesenchymal <- identifyOverExpressedGenes(cellchat_HumanCD10neg_Immune_Mesenchymal)
+cellchat_HumanCD10neg_Immune_Mesenchymal <- identifyOverExpressedInteractions(cellchat_HumanCD10neg_Immune_Mesenchymal)
+cellchat_HumanCD10neg_Immune_Mesenchymal <- projectData(cellchat_HumanCD10neg_Immune_Mesenchymal, PPI.mouse)
+
+#Compute the communication probability and infer cellular communication network
+#VERY LONG STEP
+cellchat_HumanCD10neg_Immune_Mesenchymal <- computeCommunProb(cellchat_HumanCD10neg_Immune_Mesenchymal, raw.use = TRUE)
+
+#Infer the cell-cell communication at a signaling pathway level
+cellchat_HumanCD10neg_Immune_Mesenchymal <- computeCommunProbPathway(cellchat_HumanCD10neg_Immune_Mesenchymal)
+
+#Calculate the aggregated cell-cell communication network
+cellchat_HumanCD10neg_Immune_Mesenchymal <- aggregateNet(cellchat_HumanCD10neg_Immune_Mesenchymal)
+
+#Visualize the aggregated cell-cell communication network, showing the number of interactions 
+#or the total interaction strength (weights) between any two cell groups using circle plot.
+groupSize_Potter_IRI <- as.numeric(table(cellchat_HumanCD10neg_Immune_Mesenchymal@idents))
+par(mfrow = c(1,2), xpd=TRUE)
+netVisual_circle(cellchat_HumanCD10neg_Immune_Mesenchymal@net$count, vertex.weight = groupSize_Potter_IRI, weight.scale = T, label.edge= F, vertex.label.cex = 0.000001)
+netVisual_circle(cellchat_HumanCD10neg_Immune_Mesenchymal@net$count, vertex.weight = groupSize_UUO, weight.scale = T, label.edge= F, vertex.label.cex = 0.000001, margin = 0.005)
+netVisual_circle(cellchat_HumanCD10neg_Immune_Mesenchymal@net$weight, vertex.weight = groupSize_Potter_IRI, weight.scale = T, label.edge= F, vertex.label.cex = 0.000001, margin = 0.005)
+
+#Due to the complicated cell-cell communication network, we can examine the signaling sent from each cell group.
+mat_IRI <- cellchat_HumanCD10neg_Immune_Mesenchymal@net$weight
+par(mfrow = c(3,4), xpd=TRUE)
+for (i in 1:nrow(mat_IRI)) {
+  mat_IRI_2 <- matrix(0, nrow = nrow(mat_IRI), ncol = ncol(mat_IRI), dimnames = dimnames(mat_IRI))
+  mat_IRI_2[i, ] <- mat_IRI[i, ]
+  netVisual_circle(mat_IRI_2, vertex.weight = groupSize_Potter_IRI, weight.scale = T, edge.weight.max = max(mat_IRI), title.name = rownames(mat_IRI)[i])
+}
+
+#Determine the signifantly regulated signaling pathways
+cellchat_HumanCD10neg_Immune_Mesenchymal@netP$pathways
+
+pathways.show <- c("VCAM") 
+par(mfrow=c(1,1))
+netVisual_aggregate(cellchat_HumanCD10neg_Immune_Mesenchymal, signaling = pathways.show, layout = "circle")
+
+#Compute the contribution of each ligand-receptor pair to the overall signaling pathway and visualize cell-cell communication mediated by a single ligand-receptor pair
+netAnalysis_contribution(cellchat_HumanCD10neg_Immune_Mesenchymal, signaling = pathways.show)
